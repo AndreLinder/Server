@@ -13,6 +13,7 @@ namespace Server
     {
         //Объект подключения к БД
         static MySqlConnection connection = DBUtils.GetDBConnection();
+        static MySqlConnection connection2 = DBUtils.GetDBConnection();
 
         static int port = 8005; // порт для приема входящих запросов
         static void Main(string[] args)
@@ -69,6 +70,12 @@ namespace Server
                             break;
                         case "02":
                             message = SignUp(parameters);
+                            break;
+                        case "03":
+                            message = GetChatList(parameters);
+                            break;
+                        case "04":
+                            message = GetFriendList(parameters);
                             break;
                     }
                     //Цветовое офрмление серверной части, для наглядности обмена данными
@@ -202,6 +209,103 @@ namespace Server
             }
 
             //Возвращаем ответ сервера
+            return message;
+        }
+
+        //Метод получения списка чатов (#03)
+        static string GetChatList(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Подключаемся к БД
+                connection.Open();
+
+                //Строка запроса к БД
+                string sql_cmd = "SELECT * FROM server_chats.chats WHERE (ID_User_1=@ID OR ID_User_2=@ID);";
+
+                //Создаем команду запроса к БД
+                MySqlCommand command = connection.CreateCommand();
+                command.CommandText = sql_cmd;
+
+                MySqlParameter id_user = new MySqlParameter("@ID", MySqlDbType.VarChar);
+                id_user.Value = parameters.Split('~')[0];
+                command.Parameters.Add(id_user);
+
+                using (DbDataReader reader = command.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        message = "";
+                        while (reader.Read())
+                        {
+                            message += reader.GetString(0) + "~" + reader.GetString(1) + "~";
+
+                            if (reader.GetString(2) == parameters.Split('~')[0]) message += reader.GetString(3) + "%";
+                            else message += reader.GetString(2) + "%";
+                        }
+                        message = message.Substring(0, message.Length-1);
+                    }
+                }
+
+                //Закрываем соединение
+                connection.Close();
+            }
+            catch(Exception ex)
+            {
+                message = ex.ToString();
+            }
+
+            return message;
+        }
+
+        //Метод получения списка друзей
+        static string GetFriendList(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Открываем соединение с БД
+                connection.Open();
+
+                //Строка запроса к БД
+                string sql_cmd = "SELECT * FROM server_chats.friend WHERE ID_User = @ID;";
+
+                //Создаем команду для запроса к БД
+                MySqlCommand command = connection.CreateCommand();
+                command.CommandTimeout = 200;
+                command.CommandText = sql_cmd;
+
+                //Добавляем параметры к нашему запросу
+                MySqlParameter id = new MySqlParameter("@ID", MySqlDbType.Int32);
+                id.Value = int.Parse(parameters);
+                command.Parameters.Add(id);
+
+                using (DbDataReader reader = command.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        message = "";
+                        while (reader.Read())
+                        {
+                            message += reader.GetString(1) + "~" + reader.GetString(2) + "%";
+                        }
+                    }
+                }
+                message = message.Substring(0, message.Length - 1);
+
+                //Закрываем соединение с БД
+                connection.Close();
+            }
+            catch(Exception ex)
+            {
+                //Есть вариант, при вызове исключения к началу сообщения добавлять какую-либо строку, 
+                //чтобы клиентское приложение не вызывало исключение "индекс находился вне границ массива"
+                message = ex.Message;
+            }
+
             return message;
         }
     }
