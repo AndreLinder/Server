@@ -6,6 +6,9 @@ using MySql.Data.MySqlClient;
 using ConnectionDB;
 using System.Data.Common;
 using System.Collections.Generic;
+using static System.Net.Mime.MediaTypeNames;
+using System.Data.SqlClient;
+using System.Threading.Tasks;
 
 namespace Server
 {
@@ -13,115 +16,134 @@ namespace Server
     {
         //Объект подключения к БД
         static MySqlConnection connection = DBUtils.GetDBConnection();
-        static MySqlConnection connection2 = DBUtils.GetDBConnection();
+        static MySqlConnection connection_async = DBUtils.GetDBConnection();
+        static string NewMessage = null;
 
         static int port = 8005; // порт для приема входящих запросов
         static void Main(string[] args)
         {
             // получаем адреса для запуска сокета
-            IPEndPoint ipPoint = new IPEndPoint(IPAddress.Parse("10.192.129.233"), port);
+            IPEndPoint ipPoint = new IPEndPoint(IPAddress.Any, port);
 
-            // создаем сокет
-            Socket listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            try
+            
+            while (true)
             {
-                // связываем сокет с локальной точкой, по которой будем принимать данные
-                listenSocket.Bind(ipPoint);
-
-                // начинаем прослушивание
-                listenSocket.Listen(10);
-
-                Console.WriteLine("Сервер запущен. Ожидание подключений...");
-
-                while (true)
+                // создаем сокет
+                Socket listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                try
                 {
-                    //Сообщение для ответа клиенту
-                    string message = "ERROR";
 
-                    //Номер команды и её параметры
-                    string numberCommand = "";
-                    string parameters = "";
+                    // связываем сокет с локальной точкой, по которой будем принимать данные
+                    listenSocket.Bind(ipPoint);
 
+                    // начинаем прослушивание
+                    listenSocket.Listen(10);
 
-                    Socket handler = listenSocket.Accept();
-                    // получаем сообщение
-                    StringBuilder builder = new StringBuilder();
-                    int bytes = 0; // количество полученных байтов
-                    byte[] data = new byte[256]; // буфер для получаемых данных
+                    Console.WriteLine("Сервер запущен. Ожидание подключений...");
 
-                    do
+                    while (true)
                     {
-                        bytes = handler.Receive(data);
-                        builder.Append(Encoding.Unicode.GetString(data, 0, bytes));
-                    }
-                    while (handler.Available > 0);
+                        //Сообщение для ответа клиенту
+                        string message = "ERROR";
 
-                    //Первое значение - номер команды. За символом '#' будут идти параметры для команды,
-                    //которые будут разделены символом '~' (параметров может не быть)
-                    numberCommand = builder.ToString().Split('#')[0];
-                    parameters = builder.ToString().Split('#')[1];
+                        //Номер команды и её параметры
+                        string numberCommand = "";
+                        string parameters = "";
 
-                    //В зависимости от номера команды, вызываем определенную функцию
-                    //При необходимости, передаем параметры
-                    switch (numberCommand)
-                    {
-                        case "01":
-                            message = SignIn(parameters);
-                            break;
-                        case "02":
-                            message = SignUp(parameters);
-                            break;
-                        case "03":
-                            message = GetChatList(parameters);
-                            break;
-                        case "04":
-                            message = GetFriendList(parameters);
-                            break;
-                    }
-                    //Цветовое офрмление серверной части, для наглядности обмена данными
-                    Console.ForegroundColor = ConsoleColor.Blue;
-                    Console.Write(DateTime.Now.ToShortTimeString() + ": ");
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.Write("<" + handler.RemoteEndPoint.ToString() + "> :");
-                    Console.ForegroundColor = ConsoleColor.Magenta;
-                    Console.Write(builder.ToString().Split('#')[0]);
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.Write('#');
-                    if(builder.ToString().Split('#')[1] != "") foreach(string s in builder.ToString().Split('#')[1].Split('~'))
-                    {
-                        Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.Write(s);
+
+                        Socket handler = listenSocket.Accept();
+                        // получаем сообщение
+                        StringBuilder builder = new StringBuilder();
+                        int bytes = 0; // количество полученных байтов
+                        byte[] data = new byte[256]; // буфер для получаемых данных
+
+                        do
+                        {
+                            bytes = handler.Receive(data);
+                            builder.Append(Encoding.Unicode.GetString(data, 0, bytes));
+                        }
+                        while (handler.Available > 0);
+
+
+                        //Первое значение - номер команды. За символом '#' будут идти параметры для команды,
+                        //которые будут разделены символом '~' (параметров может не быть)
+                        numberCommand = builder.ToString().Split('#')[0].Replace(" ", "");
+                        parameters = builder.ToString().Split('#')[1].Replace(" ", "");
+
+                        //В зависимости от номера команды, вызываем определенную функцию
+                        //При необходимости, передаем параметры
+                        switch (numberCommand)
+                        {
+                            case "01":
+                                message = SignIn(parameters);
+                                break;
+                            case "02":
+                                message = SignUp(parameters);
+                                break;
+                            case "03":
+                                message = GetChatList(parameters);
+                                break;
+                            case "04":
+                                message = GetFriendList(parameters);
+                                break;
+                            case "05":
+                                message = GetMessageFromChat(parameters);
+                                Console.WriteLine(message);
+                                break;
+                            case "06":
+                                message = CheckUnreadMessage_Async(parameters).Result;
+                                break;
+                            case "07":
+                                MarkRead(parameters);
+                                break;
+                        }
+                        //Цветовое офрмление серверной части, для наглядности обмена данными
+                        Console.ForegroundColor = ConsoleColor.Blue;
+                        Console.Write(DateTime.Now.ToShortTimeString() + ": ");
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.Write("<" + handler.RemoteEndPoint.ToString() + "> :");
+                        Console.ForegroundColor = ConsoleColor.Magenta;
+                        Console.Write(builder.ToString().Split('#')[0]);
                         Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write('~');
+                        Console.Write('#');
+                        if (builder.ToString().Split('#')[1] != "") foreach (string s in builder.ToString().Split('#')[1].Split('~'))
+                            {
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.Write(s);
+                                Console.ForegroundColor = ConsoleColor.DarkGray;
+                                Console.Write('~');
+                            }
+                        Console.WriteLine();
+
+                        // отправляем ответ
+                        data = Encoding.Unicode.GetBytes(message);
+                        handler.Send(data);
+
+                        //Цветовое офрмление серверной части, для наглядности обмена данными
+                        Console.ForegroundColor = ConsoleColor.Blue;
+                        Console.Write(DateTime.Now.ToShortTimeString() + ": ");
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.Write("<Response Server> : ");
+                        foreach (string value in message.Split('~'))
+                        {
+                            Console.ForegroundColor = ConsoleColor.DarkYellow;
+                            Console.Write(value);
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.Write('~');
+                        }
+                        Console.WriteLine();
+
+                        // закрываем сокет
+                        handler.Shutdown(SocketShutdown.Both);
+                        handler.Close();
                     }
-                    Console.WriteLine();
-
-                    // отправляем ответ
-                    data = Encoding.Unicode.GetBytes(message);
-                    handler.Send(data);
-
-                    //Цветовое офрмление серверной части, для наглядности обмена данными
-                    Console.ForegroundColor = ConsoleColor.Blue;
-                    Console.Write(DateTime.Now.ToShortTimeString() + ": ");
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.Write("<Response Server> : ");
-                    foreach(string value in message.Split('~'))
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkYellow;
-                        Console.Write(value);
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write('~');
-                    }
-                    Console.WriteLine();
-
-                    // закрываем сокет
-                    handler.Shutdown(SocketShutdown.Both);
-                    handler.Close();
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                    Console.ReadKey();
+                    listenSocket.Close();
+                }
             }
         }
 
@@ -240,10 +262,10 @@ namespace Server
                         message = "";
                         while (reader.Read())
                         {
-                            message += reader.GetString(0) + "~" + reader.GetString(1) + "~";
+                            message += reader.GetString(0) + "~" + reader.GetString(2) + "~";
 
-                            if (reader.GetString(2) == parameters.Split('~')[0]) message += reader.GetString(3) + "%";
-                            else message += reader.GetString(2) + "%";
+                            if (reader.GetString(3) == parameters.Split('~')[0]) message += reader.GetString(4) + "%";
+                            else message += reader.GetString(3) + "%";
                         }
                         message = message.Substring(0, message.Length-1);
                     }
@@ -260,7 +282,7 @@ namespace Server
             return message;
         }
 
-        //Метод получения списка друзей
+        //Метод получения списка друзей(#04)
         static string GetFriendList(string parameters)
         {
             string message = "ERROR";
@@ -307,6 +329,163 @@ namespace Server
             }
 
             return message;
+        }
+
+        //Получение списка сообщений из определенного чата(05#)
+        static string GetMessageFromChat(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                int MID = int.Parse(parameters.Split('~')[0]);
+                int FID = int.Parse(parameters.Split('~')[1]);
+
+                //Открываем соединение
+                connection.Open();
+
+                //Запрос на выгрузку сообщений (максимум 100)
+                string sql_cmd = "SELECT * FROM server_chats.messages WHERE (ID_Sender = @MYID AND ID_Reciever = @IDFRIEND) OR (ID_Sender = @IDFRIEND AND ID_Reciever = @MYID)";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter myID = new MySqlParameter("@MYID", MySqlDbType.Int32);
+                myID.Value = MID;
+                cmd.Parameters.Add(myID);
+
+                MySqlParameter friendID = new MySqlParameter("@IDFRIEND", MySqlDbType.Int32);
+                friendID.Value = FID;
+                cmd.Parameters.Add(friendID);
+
+                //Здесь прописывается логика отображения сообщений в окне дилога
+                //У "моих" сообщений и сообщений собеседника будет различное цветовое оформление 
+                using (DbDataReader reader = cmd.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        message = " ";
+                        while (reader.Read())
+                        {
+                                message += reader.GetString(0)+"~"+ reader.GetString(1) + "~"+ reader.GetString(2) + "~"+ reader.GetString(3) + "%";
+                        }
+                        message = message.Substring(0, message.Length - 1);
+                    }
+                }
+
+                connection.Close();
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
+                return message;
+            }
+            return message;
+        }
+
+        //Отметка о прочтении сообщений(07#)
+        static string MarkRead(string parameters)
+        {
+            int MID = int.Parse(parameters.Split('~')[0]);
+            int FID = int.Parse(parameters.Split('~')[1]);
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Запускаем запрос на отметку сообщений, как прочитанные
+                string sql_cmd = "UPDATE server_chats.messages SET Visible_Message = 1 WHERE (ID_Reciever=@MYID AND ID_Sender = @FRIENDID AND Visible_Message = 0) LIMIT 1000";
+
+                //Создаём команду запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры в запрос
+                MySqlParameter myID = new MySqlParameter("@MYID", MySqlDbType.Int32);
+                myID.Value = MID;
+                cmd.Parameters.Add(myID);
+
+                MySqlParameter friendID = new MySqlParameter("@FRIENDID", MySqlDbType.Int32);
+                friendID.Value = FID;
+                cmd.Parameters.Add(friendID);
+
+                //Осуществляем запрос
+                cmd.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+            finally
+            {
+                //Закрыавем соединение 
+                connection.Close();
+            }
+
+            return "OK";
+        }
+
+        //Поиск непрочитанных сообщений
+        static async Task<string> CheckUnreadMessage_Async(string parameters)
+        {
+            var message = "ERROR";
+            int MID = int.Parse(parameters.Split('~')[0]);
+            int FID = int.Parse(parameters.Split('~')[1]);
+
+                using (MySqlConnection conn = connection_async)
+                {
+                    try
+                    {
+                        //Открываем соединение
+                        await conn.OpenAsync();
+                        //Строка запроса
+                        string sql_cmd = "SELECT * FROM server_chats.messages WHERE (ID_Reciever = @MYID AND ID_Sender = @FRIENDID AND Visible_Message = 0);";
+
+                        //Команда запроса
+                        MySqlCommand cmd = connection_async.CreateCommand();
+                        cmd.CommandText = sql_cmd;
+
+                        //Добавляем параметры запроса
+                        MySqlParameter myID = new MySqlParameter("@MYID", MySqlDbType.Int32);
+                        myID.Value = MID;
+                        cmd.Parameters.Add(myID);
+
+                        MySqlParameter friendID = new MySqlParameter("@FRIENDID", MySqlDbType.Int32);
+                        friendID.Value = FID;
+                        cmd.Parameters.Add(friendID);
+
+                        //Проверяем в БД непрочитанные нами сообщения
+                        using (DbDataReader reader = await cmd.ExecuteReaderAsync())
+                        {
+                            if (reader.HasRows)
+                            {
+                                message = "";
+                                while (reader.Read())
+                                {
+                                        message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2);
+                                        //System.Threading.Thread.Sleep(1500);
+                                }                                    
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        message = ex.ToString();
+                    }
+                    finally
+                    {
+                        //Закрываем соединение
+                        await conn.CloseAsync();
+                        conn.Dispose();
+                    }
+                    
+                }
+                return message;
+
+                
+            
         }
     }
 }
