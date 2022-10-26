@@ -9,6 +9,10 @@ using System.Collections.Generic;
 using static System.Net.Mime.MediaTypeNames;
 using System.Data.SqlClient;
 using System.Threading.Tasks;
+using System.Linq.Expressions;
+using System.IO;
+using System.Linq;
+using System.Net.NetworkInformation;
 
 namespace Server
 {
@@ -17,25 +21,22 @@ namespace Server
         //Объект подключения к БД
         static MySqlConnection connection = DBUtils.GetDBConnection();
         static MySqlConnection connection_async = DBUtils.GetDBConnection();
-        static string NewMessage = null;
 
         static int port = 8005; // порт для приема входящих запросов
         static void Main(string[] args)
         {
-            // получаем адреса для запуска сокета
-            IPEndPoint ipPoint = new IPEndPoint(IPAddress.Any, port);
-
+            // получаем адреса для запуска сокет
+            IPEndPoint ipPoint = new IPEndPoint(IPAddress.Parse("192.168.50.219"), port);
+            Socket listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);   
             
             while (true)
             {
-                // создаем сокет
-                Socket listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                //// создаем сокет
+                listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 try
                 {
-
-                    // связываем сокет с локальной точкой, по которой будем принимать данные
                     listenSocket.Bind(ipPoint);
-
+                    listenSocket.SetIPProtectionLevel(IPProtectionLevel.Unrestricted);
                     // начинаем прослушивание
                     listenSocket.Listen(10);
 
@@ -50,25 +51,23 @@ namespace Server
                         string numberCommand = "";
                         string parameters = "";
 
-
                         Socket handler = listenSocket.Accept();
                         // получаем сообщение
                         StringBuilder builder = new StringBuilder();
                         int bytes = 0; // количество полученных байтов
-                        byte[] data = new byte[256]; // буфер для получаемых данных
-
+                        byte[] data = new byte[2560000]; // буфер для получаемых данных
                         do
                         {
                             bytes = handler.Receive(data);
                             builder.Append(Encoding.Unicode.GetString(data, 0, bytes));
                         }
                         while (handler.Available > 0);
-
-
+                        Console.WriteLine(builder.ToString());
                         //Первое значение - номер команды. За символом '#' будут идти параметры для команды,
                         //которые будут разделены символом '~' (параметров может не быть)
                         numberCommand = builder.ToString().Split('#')[0].Replace(" ", "");
-                        parameters = builder.ToString().Split('#')[1].Replace(" ", "");
+                        parameters = builder.ToString().Split('#')[1];
+                        
 
                         //В зависимости от номера команды, вызываем определенную функцию
                         //При необходимости, передаем параметры
@@ -88,13 +87,24 @@ namespace Server
                                 break;
                             case "05":
                                 message = GetMessageFromChat(parameters);
-                                Console.WriteLine(message);
                                 break;
                             case "06":
                                 message = CheckUnreadMessage_Async(parameters).Result;
                                 break;
                             case "07":
                                 MarkRead(parameters);
+                                break;
+                            case "08":
+                                message = Search_User_By_Name(parameters);
+                                break;
+                            case "10":
+                                message = Recieve_Message_And_Save(parameters);
+                                break;
+                            case "11":
+                                message = Add_To_Friend(parameters);
+                                break;
+                            case "12":
+                                message = CreateNewChat(parameters);
                                 break;
                         }
                         //Цветовое офрмление серверной части, для наглядности обмена данными
@@ -154,9 +164,8 @@ namespace Server
 
                 //Подключаемся к БД
                 connection.Open();
-
                 //Строка запроса на выборку данных из БД
-                string SQLcommand = "SELECT server_chats.users.ID, server_chats.users.User_Nickname, server_chats.users.User_Password FROM server_chats.users WHERE(User_Nickname = @NICKNAME AND User_Password = @PASSWORD)";
+                string SQLcommand = "SELECT server_chats.users.ID, server_chats.users.User_Nickname, server_chats.users.User_Password, server_chats.users.User_GUID FROM server_chats.users WHERE(User_Nickname = @NICKNAME AND User_Password = @PASSWORD)";
 
                 //Создаем объект команды для нашего запроса
                 MySqlCommand cmd = connection.CreateCommand();
@@ -177,7 +186,7 @@ namespace Server
                     {
                         while (reader.Read())
                         {
-                            message = reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "~";
+                            message = reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "~" + reader.GetString(3) + "~";
                         }
                     }
                 }
@@ -198,7 +207,7 @@ namespace Server
                 connection.Open();
 
                 //SQL-запрос на регистрацию нового пользователя
-                string SQLCommand = "INSERT INTO server_chats.users (User_Name, User_Password, User_Nickname) VALUES (@NAME,@PASSWORD,@LOGIN);";
+                string SQLCommand = "INSERT INTO server_chats.users (User_Name, User_Password, User_Nickname, User_GUID) VALUES (@NAME,@PASSWORD,@LOGIN, @GUID);";
 
                 //Создаем объект запроса для БД
                 MySqlCommand command = connection.CreateCommand();
@@ -216,6 +225,9 @@ namespace Server
                 MySqlParameter name = new MySqlParameter("@NAME", MySqlDbType.VarChar);
                 name.Value = parameters.Split('~')[0];
                 command.Parameters.Add(name);
+                MySqlParameter guid = new MySqlParameter("@GUID", MySqlDbType.VarChar);
+                guid.Value = System.Guid.NewGuid().ToString();
+                command.Parameters.Add(guid);
 
                 //Выполняем запрос
                 command.ExecuteNonQuery();
@@ -262,7 +274,7 @@ namespace Server
                         message = "";
                         while (reader.Read())
                         {
-                            message += reader.GetString(0) + "~" + reader.GetString(2) + "~";
+                            message += reader.GetString(0) + "~" + reader.GetString(2) + "~" + reader.GetString(1)+ "~";
 
                             if (reader.GetString(3) == parameters.Split('~')[0]) message += reader.GetString(4) + "%";
                             else message += reader.GetString(3) + "%";
@@ -302,7 +314,7 @@ namespace Server
 
                 //Добавляем параметры к нашему запросу
                 MySqlParameter id = new MySqlParameter("@ID", MySqlDbType.Int32);
-                id.Value = int.Parse(parameters);
+                id.Value = int.Parse(parameters.Split('~')[0]);
                 command.Parameters.Add(id);
 
                 using (DbDataReader reader = command.ExecuteReader())
@@ -312,11 +324,12 @@ namespace Server
                         message = "";
                         while (reader.Read())
                         {
-                            message += reader.GetString(1) + "~" + reader.GetString(2) + "%";
+                            message += reader.GetString(1) + "~" + reader.GetString(2) + "~" + reader.GetString(3) + "%";
                         }
+                        message = message.Substring(0, message.Length - 1);
                     }
                 }
-                message = message.Substring(0, message.Length - 1);
+                
 
                 //Закрываем соединение с БД
                 connection.Close();
@@ -396,7 +409,7 @@ namespace Server
                 connection.Open();
 
                 //Запускаем запрос на отметку сообщений, как прочитанные
-                string sql_cmd = "UPDATE server_chats.messages SET Visible_Message = 1 WHERE (ID_Reciever=@MYID AND ID_Sender = @FRIENDID AND Visible_Message = 0) LIMIT 1000";
+                string sql_cmd = "UPDATE server_chats.messages SET Visible_Message = 1, visible_notification = 1 WHERE (ID_Reciever=@MYID AND ID_Sender = @FRIENDID AND Visible_Message = 0) LIMIT 1000";
 
                 //Создаём команду запроса
                 MySqlCommand cmd = connection.CreateCommand();
@@ -427,7 +440,7 @@ namespace Server
             return "OK";
         }
 
-        //Поиск непрочитанных сообщений
+        //Поиск непрочитанных сообщений текущего диалога(06#)
         static async Task<string> CheckUnreadMessage_Async(string parameters)
         {
             var message = "ERROR";
@@ -464,9 +477,9 @@ namespace Server
                                 message = "";
                                 while (reader.Read())
                                 {
-                                        message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2);
-                                        //System.Threading.Thread.Sleep(1500);
-                                }                                    
+                                        message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "%";
+                                }
+                            message = message.Substring(0, message.Length - 1);
                             }
                         }
                     }
@@ -487,5 +500,245 @@ namespace Server
                 
             
         }
+
+
+        //Поиск пользователей(09#)
+        static string Search_User_By_Name(string parameters)
+        {
+            string message = "ERROR";
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Строка запроса на поиск пользователей в БД
+                string sql_cmd = "SELECT server_chats.users.ID, server_chats.users.User_Name, server_chats.users.User_Nickname FROM server_chats.users WHERE server_chats.users.User_Name=@NAME";
+
+                //Создаём команду для запроса в БД
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры в команду
+                MySqlParameter name_parameter = new MySqlParameter("@NAME", MySqlDbType.VarChar);
+                name_parameter.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(name_parameter);
+
+                //...
+                using (DbDataReader reader = cmd.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        message = "";
+                        while (reader.Read())
+                        {
+                            message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2);
+                        }
+                    }
+                }
+
+                connection.Close();
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;  
+            }
+
+
+            return message;
+        }
+
+        //Прием сообщения от пользователя(10#)
+        static string Recieve_Message_And_Save(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Строка запроса для БД (недописана)
+                string sql_cmd = "INSERT INTO server_chats.messages (Text_Message, Date_Message, ID_Sender, ID_Reciever, Visible_Message) VALUES (@TEXT, NOW(), @MYID, @FRIENDID, 0);";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter text_message = new MySqlParameter("@TEXT", MySqlDbType.Text);
+                text_message.Value = parameters.Split('~')[2];
+                cmd.Parameters.Add(text_message);
+
+                MySqlParameter myID = new MySqlParameter("@MYID", MySqlDbType.Int32);
+                myID.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(myID);
+
+                MySqlParameter friendID = new MySqlParameter("@FRIENDID", MySqlDbType.Int32);
+                friendID.Value = parameters.Split('~')[1];
+                cmd.Parameters.Add(friendID);
+
+                //Выполняем запрос
+                cmd.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+            finally
+            {
+                //Закрываем соединение
+                connection.Close();
+                message = "SEND";
+            }
+
+            return message;
+        }
+
+        //Добавление пользователя в список друзей(11#)
+        static string Add_To_Friend(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Открываем соединение 
+                connection.Open();
+
+                //Строка запроса на добавление пользователя в список друзей
+                string sql_cmd = "INSERT INTO server_chats.friend VALUES (@MYID, @IDFRIEND, @FRIENDNAME, @NICKNAME);";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter myID = new MySqlParameter("@MYID", MySqlDbType.Int32);
+                myID.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(myID);
+
+                MySqlParameter friendID = new MySqlParameter("@IDFRIEND", MySqlDbType.Int32);
+                friendID.Value = parameters.Split('~')[1];
+                cmd.Parameters.Add(friendID);
+
+                MySqlParameter name = new MySqlParameter("@FRIENDNAME", MySqlDbType.VarChar);
+                name.Value = parameters.Split('~')[2];
+                cmd.Parameters.Add(name);
+
+                MySqlParameter nick = new MySqlParameter("@NICKNAME", MySqlDbType.VarChar);
+                nick.Value = parameters.Split('~')[3];
+                cmd.Parameters.Add(nick);
+
+                //Запускаем команду
+                cmd.ExecuteNonQuery();
+                message = "OK";
+                
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+                message = ex.Message;
+            }
+            finally
+            {
+                //Закрываем соединение
+                connection.Close();
+            }
+
+            return message;
+        }
+
+
+        //Создание нового диалога с пользователем (12#)
+        static string CreateNewChat(string parameters)
+        {
+            string message = "OK";
+
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Строка запроса
+                string sql_cmd = "INSERT INTO server_chats.chats (GUID, Chat_Name, ID_User_1, ID_User_2) VALUES (@GUID, @CHATNAME,@IDUSER1, @IDUSER2)";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры в наш запрос
+                MySqlParameter name_parameter = new MySqlParameter("@CHATNAME", MySqlDbType.VarChar);
+                name_parameter.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(name_parameter);
+
+                MySqlParameter id1 = new MySqlParameter("@IDUSER1", MySqlDbType.Int32);
+                id1.Value = int.Parse(parameters.Split('~')[1]);
+                cmd.Parameters.Add(id1);
+
+                MySqlParameter id2 = new MySqlParameter("@IDUSER2", MySqlDbType.Int32);
+                id2.Value = int.Parse(parameters.Split('~')[2]);
+                cmd.Parameters.Add(id2);
+
+                MySqlParameter guid = new MySqlParameter("@GUID", MySqlDbType.VarChar);
+                guid.Value = System.Guid.NewGuid().ToString();
+                cmd.Parameters.Add(guid);
+
+                cmd.ExecuteNonQuery();
+            }
+            catch (MySqlException ex)
+            {
+                message = ex.Message;
+                Console.WriteLine(ex.Message);
+            }
+            finally
+            {
+                //Закрываем соединение
+                connection.Close();
+            }
+
+            return message;
+        }
+
+        
+
+        //Не рабочий метод
+        ////Прием и сохранение изображения(10#)
+        //static string Save_Picture(StringBuilder parameters)
+        //{
+        //    string message = "OK";
+
+        //    Console.WriteLine(parameters.ToString().Length);
+
+        //    byte[] image = Encoding.Unicode.GetBytes(parameters.ToString());
+
+        //    Console.WriteLine(image.Length);
+
+        //    try
+        //    {
+        //        connection.Open();
+
+        //        MySqlCommand cmd = connection.CreateCommand();
+        //        cmd.CommandText = "INSERT INTO server_chats.user_profile VALUES (4, @IMAGE)";
+
+        //        //using (FileStream fs = new FileStream("C:\\Users\\artur\\OneDrive\\Изображения\\2017-11-27 14-45-44_1609234090589.JPG", FileMode.Open))
+        //        //{
+        //        //    image = new byte[fs.Length];
+        //        //    fs.Read(image, 0, image.Length);
+        //        //}
+
+        //        MySqlParameter path = new MySqlParameter("@IMAGE", MySqlDbType.MediumBlob);
+        //        path.Value = image;
+        //        cmd.Parameters.Add(path);
+
+        //        cmd.ExecuteNonQuery();
+
+        //        connection.Close();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Console.WriteLine(ex.Message);
+        //    }
+
+        //    return message;
+        //}
     }
 }
