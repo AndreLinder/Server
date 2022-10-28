@@ -62,7 +62,6 @@ namespace Server
                             builder.Append(Encoding.Unicode.GetString(data, 0, bytes));
                         }
                         while (handler.Available > 0);
-                        Console.WriteLine(builder.ToString());
                         //Первое значение - номер команды. За символом '#' будут идти параметры для команды,
                         //которые будут разделены символом '~' (параметров может не быть)
                         numberCommand = builder.ToString().Split('#')[0].Replace(" ", "");
@@ -105,6 +104,12 @@ namespace Server
                                 break;
                             case "12":
                                 message = CreateNewChat(parameters);
+                                break;
+                            case "13":
+                                message = Delete_Message(parameters);
+                                break;
+                            case "14":
+                                message = Delete_Contact(parameters);
                                 break;
                         }
                         //Цветовое офрмление серверной части, для наглядности обмена данными
@@ -257,7 +262,7 @@ namespace Server
                 connection.Open();
 
                 //Строка запроса к БД
-                string sql_cmd = "SELECT * FROM server_chats.chats WHERE (ID_User_1=@ID OR ID_User_2=@ID);";
+                string sql_cmd = "SELECT server_chats.chats.Chat_Name, server_chats.chats.ID, server_chats.chats.GUID, server_chats.users.User_Name, server_chats.chats.ID_User_1,server_chats.chats.ID_User_2 FROM server_chats.chats, server_chats.users WHERE (ID_User_1=@ID AND server_chats.users.ID = ID_User_2) OR (ID_User_2=@ID AND server_chats.users.ID = ID_User_1); ";
 
                 //Создаем команду запроса к БД
                 MySqlCommand command = connection.CreateCommand();
@@ -274,10 +279,10 @@ namespace Server
                         message = "";
                         while (reader.Read())
                         {
-                            message += reader.GetString(0) + "~" + reader.GetString(2) + "~" + reader.GetString(1)+ "~";
+                            message += reader.GetString(1) + "~" + reader.GetString(0) + "~" + reader.GetString(2)+ "~" + reader.GetString(3) + "~";
 
-                            if (reader.GetString(3) == parameters.Split('~')[0]) message += reader.GetString(4) + "%";
-                            else message += reader.GetString(3) + "%";
+                            if (reader.GetString(4) == parameters.Split('~')[0]) message += reader.GetString(5) + "%";
+                            else message += reader.GetString(4) + "%";
                         }
                         message = message.Substring(0, message.Length-1);
                     }
@@ -579,6 +584,20 @@ namespace Server
 
                 //Выполняем запрос
                 cmd.ExecuteNonQuery();
+
+                sql_cmd = "SELECT MAX(server_chats.messages.ID) FROM server_chats.messages WHERE (Text_Message = @TEXT AND ID_Sender = @MYID AND ID_Reciever = @FRIENDID)";
+                cmd.CommandText = sql_cmd;
+
+                using (DbDataReader reader = cmd.ExecuteReader())
+                {
+                    if(reader.HasRows)
+                    {
+                        while (reader.Read())
+                        {
+                            message = reader.GetString(0);
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -588,7 +607,6 @@ namespace Server
             {
                 //Закрываем соединение
                 connection.Close();
-                message = "SEND";
             }
 
             return message;
@@ -655,6 +673,7 @@ namespace Server
 
             try
             {
+                string G = System.Guid.NewGuid().ToString();
                 //Открываем соединение
                 connection.Open();
 
@@ -678,8 +697,9 @@ namespace Server
                 id2.Value = int.Parse(parameters.Split('~')[2]);
                 cmd.Parameters.Add(id2);
 
+                message += "~" + G;
                 MySqlParameter guid = new MySqlParameter("@GUID", MySqlDbType.VarChar);
-                guid.Value = System.Guid.NewGuid().ToString();
+                guid.Value = G;
                 cmd.Parameters.Add(guid);
 
                 cmd.ExecuteNonQuery();
@@ -698,7 +718,86 @@ namespace Server
             return message;
         }
 
-        
+        //Удаление сообщения из чата(13#)
+        static string Delete_Message(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Строка запроса
+                string sql_cmd = "DELETE FROM server_chats.messages WHERE ID = @IDMESSAGE;";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter messageID = new MySqlParameter("@IDMESSAGE", MySqlDbType.Int32);
+                messageID.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(messageID);
+
+                //Выполняем запрос
+                cmd.ExecuteNonQuery();
+                message = "MESSAGE_DELETE";
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+            finally
+            {
+                //Закрываем соединение
+                connection.Close();
+            }
+
+            return message;
+        }
+
+        //Удаление пользователя из списка контактов(14#)
+        static string Delete_Contact(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Строка запроса на удаление пользователя из друзей
+                string sql_cmd = "DELETE FROM server_chats.friend WHERE ID_User = @MYID AND ID_Friend = @IDFRIEND";
+
+                //Создаём команду запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter myID = new MySqlParameter("@MYID", MySqlDbType.Int32);
+                myID.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(myID);
+
+                MySqlParameter friendID = new MySqlParameter("@IDFRIEND", MySqlDbType.Int32);
+                friendID.Value = parameters.Split('~')[1];
+                cmd.Parameters.Add(friendID);
+
+                cmd.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+            finally
+            {
+                //Закрываем соединение
+                connection.Close();
+                message = "USER_DELETED";
+            }
+
+            return message;
+        }
 
         //Не рабочий метод
         ////Прием и сохранение изображения(10#)
