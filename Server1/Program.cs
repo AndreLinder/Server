@@ -517,7 +517,7 @@ namespace Server
                 connection.Open();
 
                 //Строка запроса на поиск пользователей в БД
-                string sql_cmd = "SELECT server_chats.users.ID, server_chats.users.User_Name, server_chats.users.User_Nickname FROM server_chats.users WHERE server_chats.users.User_Name=@NAME";
+                string sql_cmd = "SELECT server_chats.users.ID, server_chats.users.User_Name, server_chats.users.User_Nickname FROM server_chats.users WHERE server_chats.users.User_Name LIKE @NAME";
 
                 //Создаём команду для запроса в БД
                 MySqlCommand cmd = connection.CreateCommand();
@@ -525,7 +525,7 @@ namespace Server
 
                 //Добавляем параметры в команду
                 MySqlParameter name_parameter = new MySqlParameter("@NAME", MySqlDbType.VarChar);
-                name_parameter.Value = parameters.Split('~')[0];
+                name_parameter.Value = parameters.Split('~')[0]+"%";
                 cmd.Parameters.Add(name_parameter);
 
                 //...
@@ -536,8 +536,9 @@ namespace Server
                         message = "";
                         while (reader.Read())
                         {
-                            message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2);
+                            message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "%";
                         }
+                        message = message.Substring(0, message.Length - 1);
                     }
                 }
 
