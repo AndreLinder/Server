@@ -652,6 +652,11 @@ namespace Server
                 message = "OK";
                 
             }
+            catch(MySqlException e)
+            {
+                Console.WriteLine(e.Message);
+                message = e.Number + "";
+            }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.ToString());
@@ -795,6 +800,65 @@ namespace Server
                 //Закрываем соединение
                 connection.Close();
                 message = "USER_DELETED";
+            }
+
+            return message;
+        }
+
+        //Создание группового чата(#15)
+        static string Create_Group_Chat(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                string G = System.Guid.NewGuid().ToString();
+                //Открываем соединение
+                connection.Open();
+
+                //Строка запроса
+                string sql_cmd = "INSERT INTO server_chats.group_chats (Name_Group, List_ID, GUID) VALUES (@CHATNAME,@IDUSEROWNER, @GUID)";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры в наш запрос
+                MySqlParameter name_parameter = new MySqlParameter("@CHATNAME", MySqlDbType.VarChar);
+                name_parameter.Value = "Group by " + parameters.Split('~')[0];
+                cmd.Parameters.Add(name_parameter);
+
+                MySqlParameter id1 = new MySqlParameter("@IDUSEROWNER", MySqlDbType.Text);
+                id1.Value = "&" + parameters.Split('~')[1] + "$!";
+                cmd.Parameters.Add(id1);
+
+                message += "~" + G;
+                MySqlParameter guid = new MySqlParameter("@GUID", MySqlDbType.VarChar);
+                guid.Value = G;
+                cmd.Parameters.Add(guid);
+
+                cmd.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+                message = ex.ToString();  
+            }
+
+            return message;
+        }
+
+        //Выгрузка сообщений из группового чата
+        static string Get_Message_From_Group_Chat(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                
+            }
+            catch (Exception ex)
+            {
+                message = ex.ToString();
             }
 
             return message;
