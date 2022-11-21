@@ -13,6 +13,7 @@ using System.Linq.Expressions;
 using System.IO;
 using System.Linq;
 using System.Net.NetworkInformation;
+using System.Security.Cryptography;
 
 namespace Server
 {
@@ -110,6 +111,18 @@ namespace Server
                                 break;
                             case "14":
                                 message = Delete_Contact(parameters);
+                                break;
+                            case "15":
+                                message = Create_Group_Chat(parameters);
+                                break;
+                            case "16":
+                                message = Update_Group_Chat(parameters);
+                                break;
+                            case "17":
+                                message = Get_Message_From_Group_Chat(parameters);
+                                break;
+                            case "18":
+                                message = Recieve_And_Save_Message_From_Group(parameters);
                                 break;
                         }
                         //Цветовое офрмление серверной части, для наглядности обмена данными
@@ -378,8 +391,6 @@ namespace Server
                 friendID.Value = FID;
                 cmd.Parameters.Add(friendID);
 
-                //Здесь прописывается логика отображения сообщений в окне дилога
-                //У "моих" сообщений и сообщений собеседника будет различное цветовое оформление 
                 using (DbDataReader reader = cmd.ExecuteReader())
                 {
                     if (reader.HasRows)
@@ -838,6 +849,8 @@ namespace Server
                 cmd.Parameters.Add(guid);
 
                 cmd.ExecuteNonQuery();
+
+                connection.Close();
             }
             catch (Exception ex)
             {
@@ -847,18 +860,153 @@ namespace Server
             return message;
         }
 
-        //Выгрузка сообщений из группового чата
+        //Обновление списка групповых чатов(16#)
+        static string Update_Group_Chat(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Подключаемся к БД
+                connection.Open();
+
+                //Строка запроса к БД
+                string sql_cmd = "SELECT * FROM server_chats.group_chats WHERE server_chats.group_chats.List_ID LIKE @IDKEY; ";
+
+                //Создаем команду запроса к БД
+                MySqlCommand command = connection.CreateCommand();
+                command.CommandText = sql_cmd;
+
+                MySqlParameter id_user = new MySqlParameter("@IDKEY", MySqlDbType.VarChar);
+                id_user.Value = "%&" + parameters.Split('~')[0] + "$!%";
+                command.Parameters.Add(id_user);
+
+                using (DbDataReader reader = command.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        message = "";
+                        while (reader.Read())
+                        {
+                            message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "~" + reader.GetString(3) + "%";
+                        }
+                        message = message.Substring(0, message.Length - 1);
+                    }
+                }
+
+                //Закрываем соединение
+                connection.Close();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+
+            return message;
+        }
+
+        //Выгрузка сообщений из группового чата(17#)
         static string Get_Message_From_Group_Chat(string parameters)
         {
             string message = "ERROR";
 
             try
             {
-                
+                //Открываем соединение
+                connection.Open();
+
+                //Запрос на выгрузку сообщений (максимум 100)
+                string sql_cmd = "select server_chats.messages_group_chat.ID, server_chats.messages_group_chat.Text_Message, server_chats.messages_group_chat.ID_Sender, server_chats.messages_group_chat.Date_Message, server_chats.users.User_Name from server_chats.messages_group_chat left join server_chats.users on server_chats.messages_group_chat.ID_Sender = server_chats.users.ID where ID_Chat = @IDCHAT;";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter ID = new MySqlParameter("@IDCHAT", MySqlDbType.Int32);
+                ID.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(ID);
+
+                using (DbDataReader reader = cmd.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        message = " ";
+                        while (reader.Read())
+                        {
+                            message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "~" + reader.GetString(3) + "~" + reader.GetString(4) + "%";
+                        }
+                        message = message.Substring(0, message.Length - 1);
+                    }
+                }
+
+                connection.Close();
             }
             catch (Exception ex)
             {
                 message = ex.ToString();
+            }
+
+            return message;
+        }
+
+
+        //Получение и сохранение сообщения определенного группового диалога(18#)
+        static string Recieve_And_Save_Message_From_Group(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Строка запроса для БД (недописана)
+                string sql_cmd = "INSERT INTO server_chats.messages_group_chat (Text_Message, ID_Sender, ID_Chat, Date_Message) VALUES (@TEXT, @MYID, @IDCHAT, NOW());";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter text_message = new MySqlParameter("@TEXT", MySqlDbType.Text);
+                text_message.Value = parameters.Split('~')[2];
+                cmd.Parameters.Add(text_message);
+
+                MySqlParameter myID = new MySqlParameter("@MYID", MySqlDbType.Int32);
+                myID.Value = parameters.Split('~')[1];
+                cmd.Parameters.Add(myID);
+
+                MySqlParameter IDchat = new MySqlParameter("@IDCHAT", MySqlDbType.Int32);
+                IDchat.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(IDchat);
+
+                MySqlParameter IDvisible = new MySqlParameter("@VID", MySqlDbType.Text);
+                IDvisible.Value = "&" + parameters.Split('~')[0] + "$!";
+                cmd.Parameters.Add(IDvisible);
+
+                //Выполняем запрос
+                cmd.ExecuteNonQuery();
+
+                sql_cmd = "SELECT MAX(server_chats.messages_group_chat.ID) FROM server_chats.messages_group_chat WHERE (Text_Message = @TEXT AND ID_Sender = @MYID)";
+                cmd.CommandText = sql_cmd;
+
+                using (DbDataReader reader = cmd.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        while (reader.Read())
+                        {
+                            message = reader.GetString(0);
+                        }
+                    }
+                }
+                connection.Close();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                message = ex.Message;
             }
 
             return message;
