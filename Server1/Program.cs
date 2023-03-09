@@ -27,7 +27,8 @@ namespace Server
         static void Main(string[] args)
         {
             // получаем адреса для запуска сокет
-            IPEndPoint ipPoint = new IPEndPoint(IPAddress.Parse("192.168.50.219"), port);
+
+            IPEndPoint ipPoint = new IPEndPoint(IPAddress.Any, port);
             Socket listenSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);   
             
             while (true)
@@ -37,9 +38,9 @@ namespace Server
                 try
                 {
                     listenSocket.Bind(ipPoint);
-                    listenSocket.SetIPProtectionLevel(IPProtectionLevel.Unrestricted);
+                    //listenSocket.SetIPProtectionLevel(IPProtectionLevel.Unrestricted);
                     // начинаем прослушивание
-                    listenSocket.Listen(10);
+                    listenSocket.Listen(100);
 
                     Console.WriteLine("Сервер запущен. Ожидание подключений...");
 
@@ -52,7 +53,7 @@ namespace Server
                         string numberCommand = "";
                         string parameters = "";
 
-                        Socket handler = listenSocket.Accept();
+                        Socket handler = listenSocket.AcceptAsync().Result;
                         // получаем сообщение
                         StringBuilder builder = new StringBuilder();
                         int bytes = 0; // количество полученных байтов
@@ -89,7 +90,7 @@ namespace Server
                                 message = GetMessageFromChat(parameters);
                                 break;
                             case "06":
-                                message = CheckUnreadMessage_Async(parameters).Result;
+                                message = Task.Run(()=>CheckUnreadMessage_Async(parameters).Result).Result;
                                 break;
                             case "07":
                                 MarkRead(parameters);
@@ -123,6 +124,18 @@ namespace Server
                                 break;
                             case "18":
                                 message = Recieve_And_Save_Message_From_Group(parameters);
+                                break;
+                            case "19":
+                                message = Get_Users_List_From_Group(parameters);
+                                break;
+                            case "20":
+                                message = Get_User_Name_By_ID(parameters);
+                                break;
+                            case "21":
+                                message = Update_Group_Message(parameters).Result;
+                                break;
+                            case "22":
+                                message = Add_User_On_Group(parameters);
                                 break;
                         }
                         //Цветовое офрмление серверной части, для наглядности обмена данными
@@ -169,7 +182,6 @@ namespace Server
                 catch (Exception ex)
                 {
                     Console.WriteLine(ex.Message);
-                    Console.ReadKey();
                     listenSocket.Close();
                 }
             }
@@ -1007,6 +1019,193 @@ namespace Server
             {
                 Console.WriteLine(ex.Message);
                 message = ex.Message;
+            }
+
+            return message;
+        }
+
+        //Метод выгружает список пользователей группового чата (#19)
+        static string Get_Users_List_From_Group(string parameters)
+        {
+            string message = "ERROR";
+            try
+            {
+
+                //Открываем соединение
+                connection.Open();
+
+                //Запрос на выгрузку сообщений (максимум 100)
+                string sql_cmd = "select server_chats.group_chats.List_ID from server_chats.group_chats where server_chats.group_chats.ID = @IDCHAT;";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter ID = new MySqlParameter("@IDCHAT", MySqlDbType.Int32);
+                ID.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(ID);
+
+                using (DbDataReader reader = cmd.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        message = "";
+                        while (reader.Read())
+                        {
+                            message = reader.GetString(0);
+                        }
+                    }
+                }
+
+                connection.Close();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+            return message;
+        }
+
+        //Метод получения имени пользователя по его ID(#20)
+        static string Get_User_Name_By_ID(string parameters)
+        {
+            string message = "NONAME";
+
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Запрос на выгрузку сообщений (максимум 100)
+                string sql_cmd = "select server_chats.users.User_Name from server_chats.users where server_chats.users.ID = @ID;";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter ID = new MySqlParameter("@ID", MySqlDbType.Int32);
+                ID.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(ID);
+
+                using (DbDataReader reader = cmd.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        message = "";
+                        while (reader.Read())
+                        {
+                            message = reader.GetString(0);
+                        }
+                    }
+                }
+
+                connection.Close();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+
+            return message;
+        }
+
+        //Обновление группового чата в реальном времени
+        //Вынести в отлельный модуль на 8007 порту, как демон
+        static async Task<string> Update_Group_Message(string parameters)
+        {
+            string message = "ERROR";
+
+            using (MySqlConnection conn = connection_async)
+            {
+                try
+                {
+                    //Открываем соединение
+                    await conn.OpenAsync();
+                    //Строка запроса
+                    string sql_cmd = "select * from server_chats.messages_group_chat where ID_Chat = @IDCHAT AND ID > @CURRENT_ID";
+
+                    //Команда запроса
+                    MySqlCommand cmd = connection_async.CreateCommand();
+                    cmd.CommandText = sql_cmd;
+
+                    //Добавляем параметры запроса
+                    MySqlParameter myID = new MySqlParameter("@IDCHAT", MySqlDbType.Int32);
+                    myID.Value = int.Parse(parameters.Split('~')[0]);
+                    cmd.Parameters.Add(myID);
+
+                    MySqlParameter friendID = new MySqlParameter("@CURRENT_ID", MySqlDbType.Int32);
+                    friendID.Value = int.Parse(parameters.Split('~')[1]);
+                    cmd.Parameters.Add(friendID);
+
+                    //Проверяем в БД непрочитанные нами сообщения
+                    using (DbDataReader reader = await cmd.ExecuteReaderAsync())
+                    {
+                        if (reader.HasRows)
+                        {
+                            message = "";
+                            while (reader.Read())
+                            {
+                                message += reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "~" + reader.GetString(4) + "%";
+                            }
+                            message = message.Substring(0, message.Length-1);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    message = ex.ToString();
+                }
+                finally
+                {
+                    //Закрываем соединение
+                    await conn.CloseAsync();
+                    conn.Dispose();
+                }
+
+            }
+
+            return message;
+        }
+
+        static string Add_User_On_Group(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                //Открываем соединение
+                connection.Open();
+
+                //Строка запроса для БД (недописана)
+                string sql_cmd = "UPDATE server_chats.group_chats SET List_ID = CONCAT(List_ID, @IDUSER) WHERE ID=@IDCHAT;";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter iduser = new MySqlParameter("@IDUSER", MySqlDbType.Text);
+                iduser.Value = "&"+ parameters.Split('~')[0] + "$!";
+                cmd.Parameters.Add(iduser);
+
+                MySqlParameter IDchat = new MySqlParameter("@IDCHAT", MySqlDbType.Int32);
+                IDchat.Value = parameters.Split('~')[1];
+                cmd.Parameters.Add(IDchat);
+
+                //Выполняем запрос
+                cmd.ExecuteNonQuery();
+
+                message = "OK";
+            }
+            catch(Exception ex)
+            {
+                message = ex.ToString();
+            }
+            finally
+            {
+                connection.Close();
             }
 
             return message;
