@@ -137,6 +137,9 @@ namespace Server
                             case "22":
                                 message = Add_User_On_Group(parameters);
                                 break;
+                            case "23":
+                                message = Change_Password(parameters);
+                                break;
                         }
                         //Цветовое офрмление серверной части, для наглядности обмена данными
                         Console.ForegroundColor = ConsoleColor.Blue;
@@ -195,7 +198,7 @@ namespace Server
                 //Подключаемся к БД
                 connection.Open();
                 //Строка запроса на выборку данных из БД
-                string SQLcommand = "SELECT server_chats.users.ID, server_chats.users.User_Nickname, server_chats.users.User_Password, server_chats.users.User_GUID FROM server_chats.users WHERE(User_Nickname = @NICKNAME AND User_Password = @PASSWORD)";
+                string SQLcommand = "SELECT server_chats.users.ID, server_chats.users.User_Nickname, server_chats.users.User_Password, server_chats.users.User_GUID, server_chats.Users.User_Name FROM server_chats.users WHERE(User_Nickname = @NICKNAME AND User_Password = @PASSWORD)";
 
                 //Создаем объект команды для нашего запроса
                 MySqlCommand cmd = connection.CreateCommand();
@@ -216,7 +219,7 @@ namespace Server
                     {
                         while (reader.Read())
                         {
-                            message = reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "~" + reader.GetString(3) + "~";
+                            message = reader.GetString(0) + "~" + reader.GetString(1) + "~" + reader.GetString(2) + "~" + reader.GetString(3) + "~" + reader.GetString(4) + "~";
                         }
                     }
                 }
@@ -1169,6 +1172,7 @@ namespace Server
             return message;
         }
 
+        //Добавление пользователя в группу
         static string Add_User_On_Group(string parameters)
         {
             string message = "ERROR";
@@ -1207,6 +1211,80 @@ namespace Server
             {
                 connection.Close();
             }
+
+            return message;
+        }
+
+        //Смена пароля
+        static string Change_Password(string parameters)
+        {
+            string message = "ERROR";
+
+            try
+            {
+                connection.Open();
+
+                //Запрос на выгрузку сообщений (максимум 100)
+                string sql_cmd = "select server_chats.users.User_Password from server_chats.users where server_chats.users.ID = @ID;";
+
+                //Команда запроса
+                MySqlCommand cmd = connection.CreateCommand();
+                cmd.CommandText = sql_cmd;
+
+                //Добавляем параметры
+                MySqlParameter ID = new MySqlParameter("@ID", MySqlDbType.Int32);
+                ID.Value = parameters.Split('~')[0];
+                cmd.Parameters.Add(ID);
+
+                string pass = "";
+                using (DbDataReader reader = cmd.ExecuteReader())
+                {
+                    if (reader.HasRows)
+                    {
+                        while (reader.Read())
+                        {
+                            pass = reader.GetString(0);
+                        }
+                    }
+                }
+                //Console.WriteLine(parameters.Split('~')[1] + "\n" + pass);
+                if(pass == parameters.Split('~')[1])
+                {
+                    //Запрос на выгрузку сообщений (максимум 100)
+                    sql_cmd = "UPDATE server_chats.users SET User_Password = @NEWPASSWORD WHERE server_chats.users.ID = @ID;";
+
+                    //Команда запроса
+                    cmd = connection.CreateCommand();
+                    cmd.CommandText = sql_cmd;
+
+                    //Добавляем параметры
+                    cmd.Parameters.Add(ID);
+
+                    MySqlParameter password = new MySqlParameter("@NEWPASSWORD", MySqlDbType.VarChar);
+                    password.Value = parameters.Split('~')[2];
+                    cmd.Parameters.Add(password);
+
+                    cmd.ExecuteNonQuery();
+
+                    connection.Close();
+
+                    return "OK";
+                }
+                else
+                {
+                    connection.Close();
+                    return "ERROR";
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+            finally 
+            { 
+                connection.Close();
+            } 
 
             return message;
         }
